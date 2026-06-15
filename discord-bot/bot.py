@@ -276,6 +276,26 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
             )
             await ctx.send(format_results(rows, f"{item_q} + {curse_q} + {min_n}+ curses"))
 
+    # ── cursewith: any item that has a specific curse + N+ total curses ─────────
+    elif search_type == "cursewith":
+        # !searchloot cursewith Curse of Transfiguration, 3
+        parts = [p.strip() for p in query.rsplit(',', 1)]
+        if len(parts) < 2:
+            await ctx.send("❌ Usage: `!searchloot cursewith <curse>, <N>`\n"
+                           "Example: `!searchloot cursewith Curse of Transfiguration, 3`"); return
+        curse_q = parts[0]
+        try:
+            min_n = int(parts[1])
+        except ValueError:
+            await ctx.send("❌ Last argument must be a number (minimum curse count).\n"
+                           "Example: `!searchloot cursewith Curse of Transfiguration, 2`"); return
+        rows = await search_db(
+            guild_id,
+            "curses LIKE ? AND curse_count >= ?",
+            (f"%{curse_q}%", min_n)
+        )
+        await ctx.send(format_results(rows, f"{curse_q} + {min_n}+ curses"))
+
     # ── all: item that has ALL listed curses ──────────────────────────────────
     elif search_type == "all":
         # !searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear
@@ -519,6 +539,10 @@ async def loothelp(ctx):
 `!searchloot curse <curse>`
   → Any item that has that curse
   → e.g. `!searchloot curse Curse of Ruin`
+
+`!searchloot cursewith <curse>, <N>`
+  → Any item that has a specific curse AND N+ total curses
+  → e.g. `!searchloot cursewith Curse of Transfiguration, 3`
 
 `!searchloot has <item>, <curse>`
   → Item that includes a specific curse (among any number)
