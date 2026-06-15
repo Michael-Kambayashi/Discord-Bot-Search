@@ -3,7 +3,17 @@ from discord.ext import commands
 import os
 import aiosqlite
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+GST = timezone(timedelta(hours=4))  # Gulf Standard Time (UTC+4)
+
+def to_gst(utc_str: str) -> str:
+    """Convert a stored UTC ISO string to a GST display string."""
+    try:
+        dt = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
+        return dt.astimezone(GST).strftime("%Y-%m-%d %H:%M GST")
+    except Exception:
+        return utc_str
 
 DB_PATH = "discord-bot/loot.db"
 
@@ -50,7 +60,7 @@ async def store_drop(message, item):
             item["name"],
             curses_str,
             len(item["curses"]),
-            datetime.utcnow().isoformat(),
+            datetime.now(timezone.utc).isoformat(),
         ))
         await db.commit()
 
@@ -292,13 +302,13 @@ async def dbstats(ctx):
             "FROM drops WHERE guild_id = ?", (guild_id,)
         )
         row = await cur.fetchone()
-    oldest = row[3][:19] if row[3] else "—"
-    newest = row[2][:19] if row[2] else "—"
+    oldest = to_gst(row[3]) if row[3] else "—"
+    newest = to_gst(row[2]) if row[2] else "—"
     await ctx.send(
         f"📊 **Database stats for this server:**\n"
         f"• **{row[0]}** items logged from **{row[1]}** drop messages\n"
-        f"• Oldest entry: `{oldest}` UTC\n"
-        f"• Newest entry: `{newest}` UTC"
+        f"• Oldest entry: `{oldest}`\n"
+        f"• Newest entry: `{newest}`"
     )
 
 @bot.command()
@@ -316,7 +326,7 @@ async def dboldest(ctx, limit: int = 5):
         await ctx.send("❌ No drops in the database yet."); return
     lines = [f"📜 **Oldest {limit} logged drop(s):**"]
     for r in rows:
-        ts = r["recorded_at"][:19]
+        ts = to_gst(r["recorded_at"])
         curse_info = f" | *{r['curses']}*" if r['curses'] else ""
         lines.append(f"• `{ts}` [{r['item_name']}]({r['jump_url']}) ({r['curse_count']} curse(s)){curse_info}")
     await ctx.send("\n".join(lines)[:2000])
@@ -336,7 +346,7 @@ async def dbnewest(ctx, limit: int = 5):
         await ctx.send("❌ No drops in the database yet."); return
     lines = [f"🆕 **Most recent {limit} logged drop(s):**"]
     for r in rows:
-        ts = r["recorded_at"][:19]
+        ts = to_gst(r["recorded_at"])
         curse_info = f" | *{r['curses']}*" if r['curses'] else ""
         lines.append(f"• `{ts}` [{r['item_name']}]({r['jump_url']}) ({r['curse_count']} curse(s)){curse_info}")
     await ctx.send("\n".join(lines)[:2000])
@@ -403,7 +413,7 @@ async def debugitem(ctx, *, item_name: str):
         await ctx.send(f"❌ No entries found for `{item_name}` — it may not be backfilled yet."); return
     lines = [f"🔎 **DB entries for `{item_name}` (last 10):**"]
     for r in rows:
-        ts = r["recorded_at"][:19]
+        ts = to_gst(r["recorded_at"])
         lines.append(f"• `{ts}` **{r['item_name']}** | curses ({r['curse_count']}x): `{r['curses']}`")
         lines.append(f"  → {r['jump_url']}")
     await ctx.send("\n".join(lines)[:2000])
