@@ -36,7 +36,8 @@ async def init_db():
                 item_name   TEXT NOT NULL,
                 curses      TEXT NOT NULL DEFAULT '',
                 curse_count INTEGER NOT NULL DEFAULT 0,
-                recorded_at TEXT NOT NULL
+                recorded_at TEXT NOT NULL,
+                UNIQUE (message_id, item_name)
             )
         """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_item_name   ON drops (item_name COLLATE NOCASE)")
@@ -115,12 +116,14 @@ async def store_message_drops(message):
         text = get_embed_text(message.embeds[0])
         if not text:
             return 0
-        items = parse_loot_text(text)
-        for item in items:
+        all_items = parse_loot_text(text)
+        # Only store items that actually have curses
+        cursed_items = [i for i in all_items if i["curses"]]
+        for item in cursed_items:
             await store_drop(message, item)
-        if items:
-            print(f"[loot] stored {len(items)} item(s) from msg {message.id}: {[i['name'] for i in items]}")
-        return len(items)
+        if cursed_items:
+            print(f"[loot] stored {len(cursed_items)} cursed item(s) from msg {message.id}: {[i['name'] for i in cursed_items]}")
+        return len(cursed_items)
     except Exception as e:
         print(f"[loot] ERROR storing message {message.id}: {e}")
         return 0
@@ -282,11 +285,12 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
 # ─────────────────────────── DATABASE COMMANDS ──────────────────────────────
 
 @bot.command()
-async def dbwipe(ctx, limit: int = 500):
+async def dbwipe(ctx, arg: str = "500"):
     """
     Wipe all logged drops for this server and immediately re-run backfill.
-    Usage: !dbwipe          (wipe + backfill last 500 messages)
-           !dbwipe 1000     (wipe + backfill last 1000 messages)
+    Usage: !dbwipe                       — wipe + backfill last 500 messages
+           !dbwipe 1000                  — wipe + backfill last 1000 messages
+           !dbwipe 1515712207919255605   — wipe + backfill from that message ID onwards
     """
     guild_id = str(ctx.guild.id) if ctx.guild else "dm"
 
@@ -295,14 +299,52 @@ async def dbwipe(ctx, limit: int = 500):
         deleted = result.rowcount
         await db.commit()
 
-    await ctx.send(f"🗑️ Wiped **{deleted}** item(s) from the database. Starting fresh backfill of last {limit} messages...")
+    # Distinguish between a message ID (large number) and a plain limit (small number)
+    is_message_id = len(arg) >= 17
+    if is_message_id:
+        try:
+            after_id = int(arg)
+        except ValueError:
+            await ctx.send("❌ Invalid argument — provide a message ID or a message limit number."); return
+        await ctx.send(f"🗑️ Wiped **{deleted}** item(s). Backfilling all messages from ID `{after_id}` onwards (cursed items only)...")
+        stored, scanned = 0, 0
+        after_obj = discord.Object(id=after_id - 1)
+        async for message in ctx.channel.history(limit=None, after=after_obj, oldest_first=True):
+            scanned += 1
+            stored += await store_message_drops(message)
+        await ctx.send(f"✅ Done. Scanned **{scanned}** messages, stored **{stored}** cursed item(s). Try `!dboldest` now!")
+    else:
+        try:
+            limit = int(arg)
+        except ValueError:
+            await ctx.send("❌ Invalid argument — provide a message ID or a message limit number."); return
+        await ctx.send(f"🗑️ Wiped **{deleted}** item(s). Backfilling last {limit} messages (cursed items only)...")
+        stored, scanned = 0, 0
+        async for message in ctx.channel.history(limit=limit):
+            scanned += 1
+            stored += await store_message_drops(message)
+        await ctx.send(f"✅ Done. Scanned **{scanned}** messages, stored **{stored}** cursed item(s). Try `!dboldest` now!")
 
+
+@bot.command()
+async def backfillfrom(ctx, message_id: str):
+    """
+    Backfill all messages from a specific message ID onwards (no wipe).
+    Duplicate entries are automatically skipped.
+    Usage: !backfillfrom 1515712207919255605
+    """
+    try:
+        after_id = int(message_id)
+    except ValueError:
+        await ctx.send("❌ Provide a valid Discord message ID."); return
+
+    await ctx.send(f"⏳ Backfilling all messages from ID `{after_id}` onwards (cursed items only, duplicates skipped)...")
     stored, scanned = 0, 0
-    async for message in ctx.channel.history(limit=limit):
+    after_obj = discord.Object(id=after_id - 1)
+    async for message in ctx.channel.history(limit=None, after=after_obj, oldest_first=True):
         scanned += 1
         stored += await store_message_drops(message)
-
-    await ctx.send(f"✅ Backfill complete. Scanned **{scanned}** messages, stored **{stored}** item(s). Try `!dboldest` now!")
+    await ctx.send(f"✅ Done. Scanned **{scanned}** messages, stored **{stored}** cursed item(s).")
 
 
 @bot.command()
@@ -463,8 +505,9 @@ async def loothelp(ctx):
 `!searchloot ncurses <N>` — any item with N+ curses
 
 **📦 Database:**
-`!backfill [limit]` — scan channel history and store drops (default 500)
-`!dbwipe [limit]` — wipe all drops and re-run backfill from scratch
+`!backfill [limit]` — backfill last N messages (default 500)
+`!backfillfrom <message_id>` — backfill from a specific message onwards (no wipe)
+`!dbwipe [limit|message_id]` — wipe + backfill last N msgs, or from a message ID
 `!dbstats` — total items, messages, oldest/newest entry dates
 `!dbitems` — list all unique items logged with drop counts
 `!dboldest [n]` — show the oldest N logged drops
