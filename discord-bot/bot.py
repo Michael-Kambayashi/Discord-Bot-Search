@@ -282,6 +282,30 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
 # ─────────────────────────── DATABASE COMMANDS ──────────────────────────────
 
 @bot.command()
+async def dbwipe(ctx, limit: int = 500):
+    """
+    Wipe all logged drops for this server and immediately re-run backfill.
+    Usage: !dbwipe          (wipe + backfill last 500 messages)
+           !dbwipe 1000     (wipe + backfill last 1000 messages)
+    """
+    guild_id = str(ctx.guild.id) if ctx.guild else "dm"
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        result = await db.execute("DELETE FROM drops WHERE guild_id = ?", (guild_id,))
+        deleted = result.rowcount
+        await db.commit()
+
+    await ctx.send(f"🗑️ Wiped **{deleted}** item(s) from the database. Starting fresh backfill of last {limit} messages...")
+
+    stored, scanned = 0, 0
+    async for message in ctx.channel.history(limit=limit):
+        scanned += 1
+        stored += await store_message_drops(message)
+
+    await ctx.send(f"✅ Backfill complete. Scanned **{scanned}** messages, stored **{stored}** item(s). Try `!dboldest` now!")
+
+
+@bot.command()
 async def backfill(ctx, limit: int = 500):
     """Scan channel history and store drops. !backfill 1000"""
     await ctx.send(f"⏳ Backfilling last {limit} messages...")
@@ -440,6 +464,7 @@ async def loothelp(ctx):
 
 **📦 Database:**
 `!backfill [limit]` — scan channel history and store drops (default 500)
+`!dbwipe [limit]` — wipe all drops and re-run backfill from scratch
 `!dbstats` — total items, messages, oldest/newest entry dates
 `!dbitems` — list all unique items logged with drop counts
 `!dboldest [n]` — show the oldest N logged drops
