@@ -510,29 +510,51 @@ async def loothelp(ctx):
     """Show all available commands."""
     help_text = """**🔮 Loot Search Bot — Commands**
 
-**🔍 Search (instant, searches all history):**
-`!searchloot item <name>` — any drop of that item
-`!searchloot curse <curse>` — any item with that curse
-`!searchloot has <item>, <curse>` — item that includes a specific curse
+**🔍 Search (searches entire logged history):**
+
+`!searchloot item <name>`
+  → Any drop of that item
+  → e.g. `!searchloot item Archangel's Halo`
+
+`!searchloot curse <curse>`
+  → Any item that has that curse
+  → e.g. `!searchloot curse Curse of Ruin`
+
+`!searchloot has <item>, <curse>`
+  → Item that includes a specific curse (among any number)
   → e.g. `!searchloot has Dunestrider Chestplate, Curse of Mercy`
-`!searchloot combo <item>, <curse>, <N>` — item with curse AND N+ total curses
+
+`!searchloot combo <item>, <N>`
+  → Item with N or more curses total
+  → e.g. `!searchloot combo Archangel's, 2`
+
+`!searchloot combo <item>, <curse>, <N>`
+  → Item with a specific curse AND N+ total curses
   → e.g. `!searchloot combo Dunestrider Chestplate, Curse of Mercy, 3`
-`!searchloot all <item>, <c1>, <c2>, ...` — item that has ALL listed curses
+
+`!searchloot all <item>, <curse1>, <curse2>, ...`
+  → Item that has ALL of the listed curses
   → e.g. `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`
-`!searchloot 2curses` — any item with 2+ curses
-`!searchloot ncurses <N>` — any item with N+ curses
+
+`!searchloot 2curses`
+  → Any item with 2 or more curses
+
+`!searchloot ncurses <N>`
+  → Any item with N or more curses
+  → e.g. `!searchloot ncurses 4`
 
 **📦 Database:**
 `!backfill [limit]` — backfill last N messages (default 500)
-`!backfillfrom <message_id>` — backfill from a specific message onwards (no wipe)
-`!dbwipe [limit|message_id]` — wipe + backfill last N msgs, or from a message ID
-`!dbstats` — total items, messages, oldest/newest entry dates
-`!dbitems` — list all unique items logged with drop counts
-`!dboldest [n]` — show the oldest N logged drops
-`!dbnewest [n]` — show the most recent N logged drops
+`!backfillfrom <message_id>` — backfill from a specific message ID onwards (no wipe)
+`!dbwipe` — wipe all drops and backfill last 500 messages
+`!dbwipe <message_id>` — wipe and backfill from a specific message ID onwards
+`!dbstats` — total items logged, oldest and newest entry dates
+`!dbitems` — all unique item names with drop counts
+`!dboldest [n]` — oldest N logged drops (default 5)
+`!dbnewest [n]` — most recent N logged drops (default 5)
 
 **🛠 Debug:**
-`!debug [n]` — inspect last N messages (shows parse results)
+`!debug [n]` — inspect last N messages and show what the bot parsed
 `!debugitem <name>` — show exactly how an item is stored in the DB"""
     await ctx.send(help_text)
 
