@@ -240,23 +240,41 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
 
     # ── combo: item + specific curse + minimum curse count ───────────────────
     elif search_type == "combo":
-        # !searchloot combo Dunestrider Chestplate, Curse of Mercy, 3
+        # Two forms:
+        #   !searchloot combo Archangel's, 2                        → item + N+ curses
+        #   !searchloot combo Dunestrider Chestplate, Curse of Mercy, 3  → item + curse + N+ curses
         parts = [p.strip() for p in query.split(',')]
-        if len(parts) < 3:
-            await ctx.send("❌ Usage: `!searchloot combo <item>, <curse>, <min curses>`\n"
-                           "Example: `!searchloot combo Dunestrider Chestplate, Curse of Mercy, 3`"); return
-        item_q  = parts[0]
-        curse_q = parts[1]
+        if len(parts) < 2:
+            await ctx.send("❌ Usage:\n"
+                           "`!searchloot combo <item>, <N>` — item with N+ curses\n"
+                           "`!searchloot combo <item>, <curse>, <N>` — item with a specific curse and N+ curses"); return
+
+        item_q = parts[0]
+
+        # Check if the last part is a number (the min curse count)
         try:
-            min_n = int(parts[2])
+            min_n = int(parts[-1])
         except ValueError:
-            await ctx.send("❌ Third argument must be a number (minimum curse count)."); return
-        rows = await search_db(
-            guild_id,
-            "item_name LIKE ? AND curses LIKE ? AND curse_count >= ?",
-            (f"%{item_q}%", f"%{curse_q}%", min_n)
-        )
-        await ctx.send(format_results(rows, f"{item_q} + {curse_q} + {min_n}+ curses"))
+            await ctx.send("❌ Last argument must be a number (minimum curse count).\n"
+                           "Example: `!searchloot combo Archangel's, 2`"); return
+
+        if len(parts) == 2:
+            # Form 1: item + N
+            rows = await search_db(
+                guild_id,
+                "item_name LIKE ? AND curse_count >= ?",
+                (f"%{item_q}%", min_n)
+            )
+            await ctx.send(format_results(rows, f"{item_q} with {min_n}+ curses"))
+        else:
+            # Form 2: item + curse(s) + N  (everything between item and last part is the curse)
+            curse_q = ",".join(parts[1:-1]).strip()
+            rows = await search_db(
+                guild_id,
+                "item_name LIKE ? AND curses LIKE ? AND curse_count >= ?",
+                (f"%{item_q}%", f"%{curse_q}%", min_n)
+            )
+            await ctx.send(format_results(rows, f"{item_q} + {curse_q} + {min_n}+ curses"))
 
     # ── all: item that has ALL listed curses ──────────────────────────────────
     elif search_type == "all":
