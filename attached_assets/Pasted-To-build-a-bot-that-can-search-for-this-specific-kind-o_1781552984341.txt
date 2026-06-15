@@ -1,0 +1,185 @@
+To build a bot that can search for this specific kind of loot, you need to
+overcome Discord's main search limitation: Discord searches line-by-line, but
+your item and its curses are on two separate lines.
+
+To fix this, you need a bot that reads the message, understands the relationship
+between the item line and the curse line beneath it, and converts it into
+structured data.
+
+Here is a step-by-step guide and the Python code to create a bot that does
+exactly this.
+
+The Strategy
+
+We will use Python and the discord.py library. The bot will:
+
+1.  Look through recent messages in a channel (or listen to new ones).
+2.  Read the Embed Description (the green line on the left of your screenshot
+    indicates it's an Embed).
+3.  Parse the text line by line. When it sees an item, it remembers it. If the
+    next line has curses, it attaches those curses to that specific item.
+4.  Filter based on your specific criteria (e.g., "Has 2 curses" or "Is a staff
+    with a specific curse").
+
+Prerequisites
+
+1.  Install Python on your computer.
+2.  Open your terminal/command prompt and install the discord library: pip
+    install discord.py
+3.  Go to the Discord Developer Portal, create a new application, get your Bot
+    Token, and invite the bot to your server (ensure it has the "Message Content
+    Intent" enabled in the Bot tab).
+
+The Python Code
+
+Save the following code in a file named bot.py. Be sure to replace
+"YOUR_BOT_TOKEN_HERE" with your actual token.
+
+import discord
+from discord.ext import commands
+
+# Enable necessary intents
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user.name}')
+
+def parse_loot_message(text):
+    """
+    Reads the embed text line by line and groups items with their curses.
+    Returns a list of dictionaries: [{'name': 'Staff', 'curses': ['Curse of Crippling', 'Curse of Envy']}]
+    """
+    inventory = []
+    current_item = None
+
+    # Split the message into individual lines
+    lines = text.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        
+        # 1. Identify an Item (Starts with bullet point)
+        if line.startswith('•'):
+            # Example line: "• [1x] : Staff"
+            parts = line.split(' : ')
+            if len(parts) > 1:
+                item_name = parts[1].strip()
+                current_item = {"name": item_name, "curses": []}
+                inventory.append(current_item)
+                
+        # 2. Identify Curses (Must happen AFTER an item is found)
+        elif 'Curses:' in line and current_item is not None:
+            # Example line: "↳ 🔮 Curses: Curse of Crippling, Curse of Envy"
+            # Split at "Curses:" and take everything after it
+            curse_string = line.split('Curses:')[1].strip()
+            
+            # Split by comma to get individual curses
+            curses_list = [c.strip() for c in curse_string.split(',')]
+            current_item["curses"] = curses_list
+            
+    return inventory
+
+@bot.command()
+async def searchloot(ctx, search_type: str, *, query: str = ""):
+    """
+    Usage examples:
+    !searchloot 2curses
+    !searchloot specific Staff, Curse of Magnitude
+    """
+    await ctx.send("Searching recent messages... this might take a moment.")
+    
+    found_messages = []
+    
+    # Search through the last 200 messages in the channel
+    async for message in ctx.channel.history(limit=200):
+        # Ensure the message has an embed (the green line in your screenshot means it's an embed)
+        if message.embeds and message.author.bot:
+            embed_text = message.embeds[0].description
+            if not embed_text:
+                continue
+                
+            # Parse the text into structured data
+            parsed_items = parse_loot_message(embed_text)
+            
+            # --- FILTERING LOGIC ---
+            match_found = False
+            
+            for item in parsed_items:
+                # Scenario 1: Find ANY item with 2 or more curses
+                if search_type == "2curses":
+                    if len(item['curses']) >= 2:
+                        match_found = True
+                        break
+                        
+                # Scenario 2: Find a specific item with a specific curse
+                elif search_type == "specific":
+                    # Parse the user's query (e.g., "Staff, Curse of Crippling")
+                    query_parts = [q.strip().lower() for q in query.split(',')]
+                    target_item = query_parts[0]
+                    target_curse = query_parts[1] if len(query_parts) > 1 else ""
+                    
+                    if target_item in item['name'].lower():
+                        # If no specific curse was asked for, just finding the item is enough
+                        if not target_curse: 
+                            match_found = True
+                            break
+                        # Otherwise, check if the specific curse is in the item's curse list
+                        elif any(target_curse in c.lower() for c in item['curses']):
+                            match_found = True
+                            break
+
+            # If our filter found a match, save the link to this message
+            if match_found:
+                found_messages.append(message.jump_url)
+
+    # Output the results
+    if found_messages:
+        response = f"Found {len(found_messages)} matching drops!\n" + "\n".join(found_messages)
+        # Discord limits messages to 2000 chars, so we truncate if necessary
+        await ctx.send(response[:2000])
+    else:
+        await ctx.send("No matching loot found in the recent messages.")
+
+bot.run('YOUR_BOT_TOKEN_HERE')
+
+How to use this bot in Discord
+
+Once the bot is running, you can use these commands in the channel where the
+loot drops happen:
+
+1. To find ANY item that rolled 2 or more curses: Type: !searchloot 2curses The
+bot will read the last 200 messages, find items with ≥ 2 items in their curse
+list, and give you clickable links to those specific messages.
+
+2. To find a specific item with a specific curse: Type: !searchloot specific
+Staff, Curse of Envy (Separate the item and the curse with a comma).
+
+How the "Magic" works (The Parser)
+
+The secret sauce is the parse_loot_message function. When Discord's normal
+search looks at your message, it just sees a giant wall of text.
+
+Our bot reads the message and turns it into a Python list that looks like this
+behind the scenes:
+
+[
+  {"name": "Lunari", "curses": []},
+  {"name": "Staff", "curses": ["Curse of Crippling", "Curse of Envy"]},
+  {"name": "Pickaxe", "curses": []}
+]
+
+Because the data is now structured perfectly, asking "Does this Staff have 2
+curses?" becomes a simple mathematical check in code (len(item['curses']) >= 2),
+rather than a messy keyword search.
+
+Next Steps for a Pro Bot
+
+Currently, this bot searches the history of the channel on command. If you want
+to search thousands of messages, this becomes slow. If you want to take it to
+the next level later, you can change the bot to use the on_message event. Every
+time the Auto Looter posts a drop, your bot instantly parses it and saves it to
+a SQLite Database. Then, your searches will be instant, no matter how old the
+drop is!
