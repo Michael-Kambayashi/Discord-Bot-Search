@@ -2,8 +2,8 @@ import discord
 from discord.ext import commands
 import os
 import aiosqlite
-import asyncio
 from datetime import datetime
+import unicodedata
 
 DB_PATH = "discord-bot/loot.db"
 
@@ -11,6 +11,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+
+# ─────────────────────────── DATABASE ───────────────────────────────────────
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -27,45 +29,13 @@ async def init_db():
                 recorded_at TEXT NOT NULL
             )
         """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_item_name   ON drops (item_name COLLATE NOCASE)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_curse_count ON drops (curse_count)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_message_id  ON drops (message_id)
-        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_item_name   ON drops (item_name COLLATE NOCASE)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_curse_count ON drops (curse_count)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_message_id  ON drops (message_id)")
         await db.commit()
 
 
-def parse_loot_message(text):
-    """
-    Parses embed text into structured items.
-    Returns: [{'name': 'Staff', 'curses': ['Curse of Crippling', 'Curse of Envy']}]
-    """
-    inventory = []
-    current_item = None
-
-    for line in text.split('\n'):
-        line = line.strip()
-
-        if line.startswith('•'):
-            parts = line.split(' : ')
-            if len(parts) > 1:
-                item_name = parts[1].strip()
-                current_item = {"name": item_name, "curses": []}
-                inventory.append(current_item)
-
-        elif 'Curses:' in line and current_item is not None:
-            curse_string = line.split('Curses:')[1].strip()
-            current_item["curses"] = [c.strip() for c in curse_string.split(',')]
-
-    return inventory
-
-
 async def store_drop(message, item):
-    """Save a single parsed item to the database."""
     curses_str = ",".join(item["curses"])
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -85,18 +55,101 @@ async def store_drop(message, item):
         await db.commit()
 
 
+# ─────────────────────────── PARSER ─────────────────────────────────────────
+
+def is_item_line(line):
+    """
+    Matches item lines regardless of exact bullet character.
+    Looks for patterns like: • [1x] : Warhammer  or  · [18x] : Lunari
+    Handles any leading bullet/arrow/emoji Unicode before the bracket.
+    """
+    stripped = line.strip()
+    # Strip any leading non-alphanumeric characters (bullets, arrows, emoji, etc.)
+    import re
+    return bool(re.match(r'^[^\w\[]*\[\d+x\]\s*:\s*.+', stripped))
+
+
+def extract_item_name(line):
+    """Pull the item name from a line like '• [1x] : Warhammer'."""
+    import re
+    m = re.search(r'\[\d+x\]\s*:\s*(.+)', line.strip())
+    return m.group(1).strip() if m else None
+
+
+def is_curse_line(line):
+    return 'Curses:' in line or 'curses:' in line
+
+
+def extract_curses(line):
+    part = line.split('Curses:')[-1] if 'Curses:' in line else line.split('curses:')[-1]
+    return [c.strip() for c in part.strip().split(',') if c.strip()]
+
+
+def get_embed_text(embed):
+    """
+    Collect all text from an embed: description + all field values.
+    Returns a single newline-joined string.
+    """
+    parts = []
+    if embed.description:
+        parts.append(embed.description)
+    for field in embed.fields:
+        if field.value:
+            parts.append(field.value)
+    return "\n".join(parts)
+
+
+def parse_loot_text(text):
+    """
+    Parse loot text (from any embed source) into structured items.
+    Returns: [{'name': 'Warhammer', 'curses': ['Curse of Vanishing']}]
+    """
+    inventory = []
+    current_item = None
+
+    for line in text.split('\n'):
+        if is_item_line(line):
+            name = extract_item_name(line)
+            if name:
+                current_item = {"name": name, "curses": []}
+                inventory.append(current_item)
+        elif is_curse_line(line) and current_item is not None:
+            current_item["curses"] = extract_curses(line)
+
+    return inventory
+
+
+def is_loot_message(message):
+    """
+    Accept messages from webhooks OR bots.
+    Webhooks: message.webhook_id is set (author.bot may or may not be True).
+    Regular bots: message.author.bot is True.
+    """
+    return bool(message.webhook_id) or message.author.bot
+
+
 async def store_message_drops(message):
-    """Parse a bot embed message and store all items found in it."""
-    if not (message.embeds and message.author.bot):
+    """Parse and store all loot items from a message. Returns count stored."""
+    if not is_loot_message(message):
         return 0
-    embed_text = message.embeds[0].description
-    if not embed_text:
+    if not message.embeds:
         return 0
-    items = parse_loot_message(embed_text)
+
+    text = get_embed_text(message.embeds[0])
+    if not text:
+        return 0
+
+    items = parse_loot_text(text)
     for item in items:
         await store_drop(message, item)
+
+    if items:
+        print(f"[loot] stored {len(items)} item(s) from msg {message.id}: {[i['name'] for i in items]}")
+
     return len(items)
 
+
+# ─────────────────────────── EVENTS ─────────────────────────────────────────
 
 @bot.event
 async def on_ready():
@@ -106,15 +159,13 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    """Live listener: parse and store every new drop automatically."""
     await store_message_drops(message)
     await bot.process_commands(message)
 
 
-# ─────────────────────────── SEARCH COMMANDS ────────────────────────────────
+# ─────────────────────────── SEARCH ─────────────────────────────────────────
 
 async def search_db(guild_id, where_clause, params, limit=50):
-    """Run a SELECT against the drops table and return rows."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(f"""
@@ -139,15 +190,7 @@ def format_results(rows, label):
 
 @bot.command()
 async def searchloot(ctx, search_type: str, *, query: str = ""):
-    """
-    Search the drop database (instant, all history).
-
-    !searchloot 2curses
-    !searchloot ncurses 3
-    !searchloot item Staff
-    !searchloot curse Curse of Magnitude
-    !searchloot specific Staff, Curse of Envy
-    """
+    """Search the drop database (instant, all history)."""
     guild_id = str(ctx.guild.id) if ctx.guild else "dm"
 
     if search_type == "2curses":
@@ -186,7 +229,38 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
         await ctx.send(format_results(rows, f"{parts[0]} + {parts[1]}"))
 
     else:
-        await ctx.send(f"❌ Unknown search type `{search_type}`. Type `!loothelp` for options.")
+        await ctx.send(f"❌ Unknown type `{search_type}`. Use `!loothelp` for options.")
+
+
+# ─────────────────────────── UTILITIES ──────────────────────────────────────
+
+@bot.command()
+async def debug(ctx, limit: int = 5):
+    """
+    Inspect the last N messages in this channel and show exactly what the bot sees.
+    Use this to diagnose why webhook drops aren't being parsed.
+    Usage: !debug       (last 5 messages)
+           !debug 10
+    """
+    lines = [f"🔍 **Debug — last {limit} messages:**\n"]
+    async for msg in ctx.channel.history(limit=limit):
+        is_hook  = bool(msg.webhook_id)
+        is_bot   = msg.author.bot
+        n_embeds = len(msg.embeds)
+        line = f"**[{msg.author.name}]** webhook={is_hook} bot={is_bot} embeds={n_embeds}"
+
+        if msg.embeds:
+            embed = msg.embeds[0]
+            desc_preview = (embed.description or "")[:80].replace('\n', '↵')
+            field_count  = len(embed.fields)
+            text_sample  = get_embed_text(embed)[:120].replace('\n', '↵')
+            items        = parse_loot_text(get_embed_text(embed))
+            line += f"\n  └ desc=`{desc_preview}` fields={field_count}"
+            line += f"\n  └ full_text=`{text_sample}`"
+            line += f"\n  └ parsed_items={[i['name'] for i in items]}"
+        lines.append(line)
+
+    await ctx.send("\n".join(lines)[:2000])
 
 
 @bot.command()
@@ -194,7 +268,7 @@ async def backfill(ctx, limit: int = 500):
     """
     Scan recent channel history and store any drops not yet in the database.
     Usage: !backfill          (last 500 messages)
-           !backfill 1000     (last 1000 messages)
+           !backfill 1000
     """
     await ctx.send(f"⏳ Backfilling last {limit} messages in this channel...")
     stored = 0
@@ -215,8 +289,7 @@ async def dbstats(ctx):
             (guild_id,)
         )
         row = await cursor.fetchone()
-        total, messages = row[0], row[1]
-    await ctx.send(f"📊 Database: **{total}** item(s) logged from **{messages}** drop message(s) in this server.")
+    await ctx.send(f"📊 Database: **{row[0]}** item(s) logged from **{row[1]}** drop message(s) in this server.")
 
 
 @bot.command()
@@ -227,15 +300,18 @@ async def loothelp(ctx):
 **Search (instant, all history):**
 `!searchloot 2curses` — items with 2+ curses
 `!searchloot ncurses <N>` — items with N+ curses
-`!searchloot item <name>` — e.g. `!searchloot item Staff`
-`!searchloot curse <curse>` — e.g. `!searchloot curse Curse of Magnitude`
-`!searchloot specific <item>, <curse>` — e.g. `!searchloot specific Staff, Curse of Envy`
+`!searchloot item <name>` — e.g. `!searchloot item Warhammer`
+`!searchloot curse <curse>` — e.g. `!searchloot curse Curse of Vanishing`
+`!searchloot specific <item>, <curse>` — e.g. `!searchloot specific Warhammer, Curse of Vanishing`
 
 **Database:**
 `!backfill [limit]` — scan channel history and store drops (default: last 500 msgs)
 `!dbstats` — show how many drops are logged
 
-The bot **automatically logs every new drop** as it appears — no manual scanning needed."""
+**Diagnostics:**
+`!debug [n]` — inspect the last N messages so you can see exactly what the bot is reading
+
+The bot **automatically logs every new drop** as it appears."""
     await ctx.send(help_text)
 
 
