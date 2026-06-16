@@ -40,23 +40,30 @@ async def init_db():
                 item_name   TEXT NOT NULL,
                 curses      TEXT NOT NULL DEFAULT '',
                 curse_count INTEGER NOT NULL DEFAULT 0,
+                player      TEXT NOT NULL DEFAULT '',
                 recorded_at TEXT NOT NULL,
                 UNIQUE (message_id, item_name)
             )
         """)
+        # Migrate existing DB: add player column if it doesn't exist yet
+        try:
+            await db.execute("ALTER TABLE drops ADD COLUMN player TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # column already exists
         await db.execute("CREATE INDEX IF NOT EXISTS idx_item_name   ON drops (item_name COLLATE NOCASE)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_curse_count ON drops (curse_count)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_message_id  ON drops (message_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_player      ON drops (player COLLATE NOCASE)")
         await db.commit()
 
 
-async def store_drop(message, item):
+async def store_drop(message, item, player: str = ""):
     curses_str = ",".join(item["curses"])
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             INSERT OR IGNORE INTO drops
-              (message_id, channel_id, guild_id, jump_url, item_name, curses, curse_count, recorded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              (message_id, channel_id, guild_id, jump_url, item_name, curses, curse_count, player, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(message.id),
             str(message.channel.id),
@@ -65,6 +72,7 @@ async def store_drop(message, item):
             item["name"],
             curses_str,
             len(item["curses"]),
+            player,
             datetime.now(timezone.utc).isoformat(),
         ))
         await db.commit()
@@ -95,6 +103,16 @@ def get_embed_text(embed):
             parts.append(field.value)
     return "\n".join(parts)
 
+def get_embed_player(embed):
+    """Extract player name from footer text like 'Player: apocgaem | Auto Looter•...'"""
+    footer = getattr(embed.footer, "text", None) if embed.footer else None
+    if not footer:
+        return ""
+    m = re.search(r'Player:\s*([^\|]+)', footer)
+    if m:
+        return m.group(1).strip()
+    return ""
+
 def parse_loot_text(text):
     inventory = []
     current_item = None
@@ -117,16 +135,19 @@ async def store_message_drops(message):
             return 0
         if not message.embeds:
             return 0
-        text = get_embed_text(message.embeds[0])
+        embed = message.embeds[0]
+        text = get_embed_text(embed)
         if not text:
             return 0
+        player = get_embed_player(embed)
         all_items = parse_loot_text(text)
         # Only store items that actually have curses
         cursed_items = [i for i in all_items if i["curses"]]
         for item in cursed_items:
-            await store_drop(message, item)
+            await store_drop(message, item, player)
         if cursed_items:
-            print(f"[loot] stored {len(cursed_items)} cursed item(s) from msg {message.id}: {[i['name'] for i in cursed_items]}")
+            player_tag = f" [{player}]" if player else ""
+            print(f"[loot] stored {len(cursed_items)} cursed item(s) from msg {message.id}{player_tag}: {[i['name'] for i in cursed_items]}")
         return len(cursed_items)
     except Exception as e:
         print(f"[loot] ERROR storing message {message.id}: {e}")
@@ -178,7 +199,7 @@ async def search_db(guild_id, where_clause, params, limit=50):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(f"""
-            SELECT DISTINCT jump_url, item_name, curses, curse_count
+            SELECT DISTINCT jump_url, item_name, curses, curse_count, player
             FROM drops
             WHERE guild_id = ? AND {where_clause}
             ORDER BY id DESC
@@ -201,7 +222,8 @@ def format_results_batched(rows, label):
     item_lines = []
     for r in rows:
         curse_info = f"\n    *{r['curses']}*" if r['curses'] else ""
-        item_lines.append(f"• [{r['item_name']}]({r['jump_url']}) ({r['curse_count']} curse(s)){curse_info}")
+        player_info = f" — `{r['player']}`" if r['player'] else ""
+        item_lines.append(f"• [{r['item_name']}]({r['jump_url']}) ({r['curse_count']} curse(s)){player_info}{curse_info}")
 
     # Chunk into batches
     batches = [item_lines[i:i + BATCH_SIZE] for i in range(0, len(item_lines), BATCH_SIZE)]
@@ -225,6 +247,33 @@ async def send_results(ctx, rows, label):
         await ctx.send(msg)
 
 
+async def scan_channel_history(ctx, limit: int = 5000):
+    """Scan this channel's history and store any loot drops found. Returns (scanned, stored)."""
+    scanned, stored = 0, 0
+    async for message in ctx.channel.history(limit=limit):
+        scanned += 1
+        stored += await store_message_drops(message)
+    return scanned, stored
+
+
+async def search_or_scan(ctx, guild_id, where_clause, params, label, limit=50):
+    """
+    Run a search. If nothing is found, transparently scan channel history for
+    new drops, then retry once. This way the user never has to run !backfill.
+    """
+    rows = await search_db(guild_id, where_clause, params, limit)
+    if not rows:
+        status = await ctx.send(
+            "🔍 Nothing found in DB — scanning channel history (this may take a moment)..."
+        )
+        scanned, stored = await scan_channel_history(ctx)
+        await status.edit(content=(
+            f"✅ Scanned **{scanned}** messages, found **{stored}** new item(s). Searching again..."
+        ))
+        rows = await search_db(guild_id, where_clause, params, limit)
+    await send_results(ctx, rows, label)
+
+
 # ─────────────────────────── SEARCH COMMANDS ────────────────────────────────
 
 @bot.command()
@@ -245,8 +294,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
 
     # ── 2curses ───────────────────────────────────────────────────────────────
     if search_type == "2curses":
-        rows = await search_db(guild_id, "curse_count >= 2", ())
-        await send_results(ctx, rows, "2+ curses")
+        await search_or_scan(ctx, guild_id, "curse_count >= 2", (), "2+ curses")
 
     # ── ncurses ───────────────────────────────────────────────────────────────
     elif search_type == "ncurses":
@@ -254,22 +302,19 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
             n = int(query)
         except ValueError:
             await ctx.send("❌ Usage: `!searchloot ncurses <number>`"); return
-        rows = await search_db(guild_id, "curse_count >= ?", (n,))
-        await send_results(ctx, rows, f"{n}+ curses")
+        await search_or_scan(ctx, guild_id, "curse_count >= ?", (n,), f"{n}+ curses")
 
     # ── item ──────────────────────────────────────────────────────────────────
     elif search_type == "item":
         if not query:
             await ctx.send("❌ Usage: `!searchloot item <name>`"); return
-        rows = await search_db(guild_id, "item_name LIKE ?", (f"%{query}%",))
-        await send_results(ctx, rows, query)
+        await search_or_scan(ctx, guild_id, "item_name LIKE ?", (f"%{query}%",), query)
 
     # ── curse ─────────────────────────────────────────────────────────────────
     elif search_type == "curse":
         if not query:
             await ctx.send("❌ Usage: `!searchloot curse <curse name>`"); return
-        rows = await search_db(guild_id, "curses LIKE ?", (f"%{query}%",))
-        await send_results(ctx, rows, query)
+        await search_or_scan(ctx, guild_id, "curses LIKE ?", (f"%{query}%",), query)
 
     # ── has: item + one specific curse ───────────────────────────────────────
     elif search_type in ("has", "specific"):
@@ -277,18 +322,15 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
         if len(parts) < 2:
             await ctx.send("❌ Usage: `!searchloot has <item>, <curse>`"); return
         item_q, curse_q = parts
-        rows = await search_db(
-            guild_id,
+        await search_or_scan(
+            ctx, guild_id,
             "item_name LIKE ? AND curses LIKE ?",
-            (f"%{item_q}%", f"%{curse_q}%")
+            (f"%{item_q}%", f"%{curse_q}%"),
+            f"{item_q} + {curse_q}"
         )
-        await send_results(ctx, rows, f"{item_q} + {curse_q}")
 
     # ── combo: item + specific curse + minimum curse count ───────────────────
     elif search_type == "combo":
-        # Two forms:
-        #   !searchloot combo Archangel's, 2                        → item + N+ curses
-        #   !searchloot combo Dunestrider Chestplate, Curse of Mercy, 3  → item + curse + N+ curses
         parts = [p.strip() for p in query.split(',')]
         if len(parts) < 2:
             await ctx.send("❌ Usage:\n"
@@ -296,8 +338,6 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
                            "`!searchloot combo <item>, <curse>, <N>` — item with a specific curse and N+ curses"); return
 
         item_q = parts[0]
-
-        # Check if the last part is a number (the min curse count)
         try:
             min_n = int(parts[-1])
         except ValueError:
@@ -305,26 +345,23 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
                            "Example: `!searchloot combo Archangel's, 2`"); return
 
         if len(parts) == 2:
-            # Form 1: item + N
-            rows = await search_db(
-                guild_id,
+            await search_or_scan(
+                ctx, guild_id,
                 "item_name LIKE ? AND curse_count >= ?",
-                (f"%{item_q}%", min_n)
+                (f"%{item_q}%", min_n),
+                f"{item_q} with {min_n}+ curses"
             )
-            await send_results(ctx, rows, f"{item_q} with {min_n}+ curses")
         else:
-            # Form 2: item + curse(s) + N  (everything between item and last part is the curse)
             curse_q = ",".join(parts[1:-1]).strip()
-            rows = await search_db(
-                guild_id,
+            await search_or_scan(
+                ctx, guild_id,
                 "item_name LIKE ? AND curses LIKE ? AND curse_count >= ?",
-                (f"%{item_q}%", f"%{curse_q}%", min_n)
+                (f"%{item_q}%", f"%{curse_q}%", min_n),
+                f"{item_q} + {curse_q} + {min_n}+ curses"
             )
-            await send_results(ctx, rows, f"{item_q} + {curse_q} + {min_n}+ curses")
 
     # ── cursewith: any item that has a specific curse + N+ total curses ─────────
     elif search_type == "cursewith":
-        # !searchloot cursewith Curse of Transfiguration, 3
         parts = [p.strip() for p in query.rsplit(',', 1)]
         if len(parts) < 2:
             await ctx.send("❌ Usage: `!searchloot cursewith <curse>, <N>`\n"
@@ -335,32 +372,29 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
         except ValueError:
             await ctx.send("❌ Last argument must be a number (minimum curse count).\n"
                            "Example: `!searchloot cursewith Curse of Transfiguration, 2`"); return
-        rows = await search_db(
-            guild_id,
+        await search_or_scan(
+            ctx, guild_id,
             "curses LIKE ? AND curse_count >= ?",
-            (f"%{curse_q}%", min_n)
+            (f"%{curse_q}%", min_n),
+            f"{curse_q} + {min_n}+ curses"
         )
-        await send_results(ctx, rows, f"{curse_q} + {min_n}+ curses")
 
     # ── all: item that has ALL listed curses ──────────────────────────────────
     elif search_type == "all":
-        # !searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear
         parts = [p.strip() for p in query.split(',')]
         if len(parts) < 2:
             await ctx.send("❌ Usage: `!searchloot all <item>, <curse1>, <curse2>, ...`\n"
                            "Example: `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`"); return
-        item_q  = parts[0]
+        item_q   = parts[0]
         curses_q = parts[1:]
-        # Build WHERE clause dynamically for each curse
         curse_conditions = " AND ".join(["curses LIKE ?"] * len(curses_q))
         curse_params = tuple(f"%{c}%" for c in curses_q)
-        rows = await search_db(
-            guild_id,
+        await search_or_scan(
+            ctx, guild_id,
             f"item_name LIKE ? AND {curse_conditions}",
-            (f"%{item_q}%", *curse_params)
+            (f"%{item_q}%", *curse_params),
+            f"{item_q} with ALL of: {', '.join(curses_q)}"
         )
-        label = f"{item_q} with ALL of: {', '.join(curses_q)}"
-        await send_results(ctx, rows, label)
 
     else:
         await ctx.send(f"❌ Unknown type `{search_type}`. Use `!loothelp` for options.")
@@ -520,6 +554,86 @@ async def dbitems(ctx):
     await ctx.send("\n".join(lines)[:2000])
 
 
+# ─────────────────────────── PLAYER COMMAND ─────────────────────────────────
+
+@bot.command()
+async def player(ctx, *, query: str = ""):
+    """
+    Search drops by player name, with optional filters.
+
+    !player apocgaem
+    !player apocgaem, item Warhammer
+    !player apocgaem, curse Curse of Mercy
+    !player apocgaem, 2curses
+    !player apocgaem, ncurses 3
+    """
+    if not query:
+        await ctx.send("❌ Usage: `!player <name>` or `!player <name>, item <item>` etc. See `!loothelp`.")
+        return
+
+    guild_id = str(ctx.guild.id) if ctx.guild else "dm"
+
+    # Split on first comma to get player name and optional filter
+    if "," in query:
+        player_name, _, filter_part = query.partition(",")
+        player_name = player_name.strip()
+        filter_part = filter_part.strip()
+    else:
+        player_name = query.strip()
+        filter_part = ""
+
+    if not player_name:
+        await ctx.send("❌ Please provide a player name."); return
+
+    # Parse optional filter
+    if not filter_part:
+        await search_or_scan(ctx, guild_id, "player LIKE ?", (f"%{player_name}%",), f"player: {player_name}")
+
+    elif filter_part.lower().startswith("item "):
+        item_q = filter_part[5:].strip()
+        await search_or_scan(
+            ctx, guild_id,
+            "player LIKE ? AND item_name LIKE ?",
+            (f"%{player_name}%", f"%{item_q}%"),
+            f"{player_name} + item: {item_q}"
+        )
+
+    elif filter_part.lower().startswith("curse "):
+        curse_q = filter_part[6:].strip()
+        await search_or_scan(
+            ctx, guild_id,
+            "player LIKE ? AND curses LIKE ?",
+            (f"%{player_name}%", f"%{curse_q}%"),
+            f"{player_name} + curse: {curse_q}"
+        )
+
+    elif filter_part.lower() == "2curses":
+        await search_or_scan(
+            ctx, guild_id,
+            "player LIKE ? AND curse_count >= 2",
+            (f"%{player_name}%",),
+            f"{player_name} + 2+ curses"
+        )
+
+    elif filter_part.lower().startswith("ncurses"):
+        parts = filter_part.split()
+        if len(parts) < 2:
+            await ctx.send("❌ Usage: `!player <name>, ncurses <N>`"); return
+        try:
+            n = int(parts[1])
+        except ValueError:
+            await ctx.send("❌ N must be a number."); return
+        await search_or_scan(
+            ctx, guild_id,
+            "player LIKE ? AND curse_count >= ?",
+            (f"%{player_name}%", n),
+            f"{player_name} + {n}+ curses"
+        )
+
+    else:
+        await ctx.send(f"❌ Unknown filter `{filter_part}`. See `!loothelp` for options.")
+
+
 # ─────────────────────────── DEBUG COMMANDS ─────────────────────────────────
 
 @bot.command()
@@ -612,6 +726,27 @@ async def loothelp(ctx):
 `!searchloot ncurses <N>`
   → Any item with N or more curses
   → e.g. `!searchloot ncurses 4`
+
+**👤 Player search:**
+
+`!player <name>`
+  → All cursed drops for that player
+  → e.g. `!player apocgaem`
+
+`!player <name>, item <item>`
+  → That player's drops of a specific item
+  → e.g. `!player apocgaem, item Warhammer`
+
+`!player <name>, curse <curse>`
+  → That player's drops with a specific curse
+  → e.g. `!player apocgaem, curse Curse of Mercy`
+
+`!player <name>, 2curses`
+  → That player's drops with 2 or more curses
+
+`!player <name>, ncurses <N>`
+  → That player's drops with N or more curses
+  → e.g. `!player apocgaem, ncurses 3`
 
 **📦 Database:**
 `!backfill [limit]` — backfill last N messages (default 500)
