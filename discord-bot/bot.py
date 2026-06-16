@@ -21,6 +21,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# Deduplicate command processing — keeps the last 500 message IDs seen
+from collections import deque
+_processed_ids: deque = deque(maxlen=500)
+
 
 # ─────────────────────────── DATABASE ───────────────────────────────────────
 
@@ -139,7 +143,20 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     try:
+        # Never process the bot's own messages
+        if message.author == bot.user:
+            return
+
+        # Store loot drops from webhooks/bots regardless
         await store_message_drops(message)
+
+        # Deduplicate command processing — Discord can deliver the same
+        # message twice (reconnect replay, startup race), so skip if we've
+        # already handled this message ID
+        if message.id in _processed_ids:
+            return
+        _processed_ids.append(message.id)
+
         await bot.process_commands(message)
     except Exception as e:
         print(f"[bot] ERROR in on_message: {e}")
