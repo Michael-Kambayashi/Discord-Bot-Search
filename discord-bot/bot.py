@@ -195,7 +195,18 @@ async def on_command_error(ctx, error):
 
 # ─────────────────────────── SEARCH HELPERS ─────────────────────────────────
 
-async def search_db(guild_id, where_clause, params, limit=50):
+DISPLAY_LIMIT = 200  # max rows returned; anything beyond is noted in the header
+
+async def count_db(guild_id, where_clause, params) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"SELECT COUNT(DISTINCT item_name || message_id) FROM drops WHERE guild_id = ? AND {where_clause}",
+            (guild_id, *params)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+async def search_db(guild_id, where_clause, params, limit=DISPLAY_LIMIT):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(f"""
@@ -209,14 +220,18 @@ async def search_db(guild_id, where_clause, params, limit=50):
 
 BATCH_SIZE = 5
 
-def format_results_batched(rows, label):
+def format_results_batched(rows, label, total_count: int = 0):
     """
     Returns a list of messages to send, each containing up to BATCH_SIZE items.
     First message has the header; subsequent messages are continuations.
     Returns a single-element list with an error string if no results.
+    total_count: actual DB count (may exceed len(rows) when capped).
     """
     if not rows:
         return [f"❌ No drops found matching: **{label}**"]
+
+    shown = len(rows)
+    truncated = total_count > shown
 
     # Build one line per result
     item_lines = []
@@ -227,14 +242,19 @@ def format_results_batched(rows, label):
 
     # Chunk into batches
     batches = [item_lines[i:i + BATCH_SIZE] for i in range(0, len(item_lines), BATCH_SIZE)]
-    total = len(rows)
     total_pages = len(batches)
 
     messages = []
     for idx, batch in enumerate(batches):
         page = f"({idx + 1}/{total_pages})" if total_pages > 1 else ""
         if idx == 0:
-            header = f"✅ Found **{total}** result(s) for **{label}**: {page}"
+            if truncated:
+                header = (
+                    f"✅ **{total_count}** total match(es) for **{label}** "
+                    f"— showing top **{shown}** (most recent): {page}"
+                )
+            else:
+                header = f"✅ Found **{shown}** result(s) for **{label}**: {page}"
         else:
             header = f"📄 Continued {page}"
         messages.append(header + "\n" + "\n".join(batch))
@@ -242,8 +262,8 @@ def format_results_batched(rows, label):
     return messages
 
 
-async def send_results(ctx, rows, label):
-    for msg in format_results_batched(rows, label):
+async def send_results(ctx, rows, label, total_count: int = 0):
+    for msg in format_results_batched(rows, label, total_count):
         await ctx.send(msg)
 
 
@@ -256,12 +276,13 @@ async def scan_channel_history(ctx, limit: int = 5000):
     return scanned, stored
 
 
-async def search_or_scan(ctx, guild_id, where_clause, params, label, limit=50):
+async def search_or_scan(ctx, guild_id, where_clause, params, label):
     """
     Run a search. If nothing is found, transparently scan channel history for
     new drops, then retry once. This way the user never has to run !backfill.
+    Always fetches the true total count so the header shows X of Y when capped.
     """
-    rows = await search_db(guild_id, where_clause, params, limit)
+    rows = await search_db(guild_id, where_clause, params)
     if not rows:
         status = await ctx.send(
             "🔍 Nothing found in DB — scanning channel history (this may take a moment)..."
@@ -270,8 +291,9 @@ async def search_or_scan(ctx, guild_id, where_clause, params, label, limit=50):
         await status.edit(content=(
             f"✅ Scanned **{scanned}** messages, found **{stored}** new item(s). Searching again..."
         ))
-        rows = await search_db(guild_id, where_clause, params, limit)
-    await send_results(ctx, rows, label)
+        rows = await search_db(guild_id, where_clause, params)
+    total = await count_db(guild_id, where_clause, params)
+    await send_results(ctx, rows, label, total_count=total)
 
 
 # ─────────────────────────── SEARCH COMMANDS ────────────────────────────────
