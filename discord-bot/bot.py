@@ -688,80 +688,67 @@ async def debugitem(ctx, *, item_name: str):
 @bot.command()
 async def loothelp(ctx):
     """Show all available commands."""
-    help_text = """**🔮 Loot Search Bot — Commands**
-
-**🔍 Search (searches entire logged history):**
-
-`!searchloot item <name>`
-  → Any drop of that item
-  → e.g. `!searchloot item Archangel's Halo`
-
-`!searchloot curse <curse>`
-  → Any item that has that curse
-  → e.g. `!searchloot curse Curse of Ruin`
-
-`!searchloot cursewith <curse>, <N>`
-  → Any item that has a specific curse AND N+ total curses
-  → e.g. `!searchloot cursewith Curse of Transfiguration, 3`
-
-`!searchloot has <item>, <curse>`
-  → Item that includes a specific curse (among any number)
-  → e.g. `!searchloot has Dunestrider Chestplate, Curse of Mercy`
-
-`!searchloot combo <item>, <N>`
-  → Item with N or more curses total
-  → e.g. `!searchloot combo Archangel's, 2`
-
-`!searchloot combo <item>, <curse>, <N>`
-  → Item with a specific curse AND N+ total curses
-  → e.g. `!searchloot combo Dunestrider Chestplate, Curse of Mercy, 3`
-
-`!searchloot all <item>, <curse1>, <curse2>, ...`
-  → Item that has ALL of the listed curses
-  → e.g. `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`
-
-`!searchloot 2curses`
-  → Any item with 2 or more curses
-
-`!searchloot ncurses <N>`
-  → Any item with N or more curses
-  → e.g. `!searchloot ncurses 4`
-
-**👤 Player search:**
-
-`!player <name>`
-  → All cursed drops for that player
-  → e.g. `!player apocgaem`
-
-`!player <name>, item <item>`
-  → That player's drops of a specific item
-  → e.g. `!player apocgaem, item Warhammer`
-
-`!player <name>, curse <curse>`
-  → That player's drops with a specific curse
-  → e.g. `!player apocgaem, curse Curse of Mercy`
-
-`!player <name>, 2curses`
-  → That player's drops with 2 or more curses
-
-`!player <name>, ncurses <N>`
-  → That player's drops with N or more curses
-  → e.g. `!player apocgaem, ncurses 3`
-
-**📦 Database:**
-`!backfill [limit]` — backfill last N messages (default 500)
-`!backfillfrom <message_id>` — backfill from a specific message ID onwards (no wipe)
-`!dbwipe` — wipe all drops and backfill last 500 messages
-`!dbwipe <message_id>` — wipe and backfill from a specific message ID onwards
-`!dbstats` — total items logged, oldest and newest entry dates
-`!dbitems` — all unique item names with drop counts
-`!dboldest [n]` — oldest N logged drops (default 5)
-`!dbnewest [n]` — most recent N logged drops (default 5)
-
-**🛠 Debug:**
-`!debug [n]` — inspect last N messages and show what the bot parsed
-`!debugitem <name>` — show exactly how an item is stored in the DB"""
-    await ctx.send(help_text)
+    await ctx.send(
+        "**🔮 Loot Search Bot — Commands (1/3) — Item & Curse Search**\n"
+        "\n"
+        "`!searchloot item <name>` — any drop of that item\n"
+        "  e.g. `!searchloot item Archangel's Halo`\n"
+        "\n"
+        "`!searchloot curse <curse>` — any item with that curse\n"
+        "  e.g. `!searchloot curse Curse of Ruin`\n"
+        "\n"
+        "`!searchloot has <item>, <curse>` — item that includes a specific curse\n"
+        "  e.g. `!searchloot has Dunestrider Chestplate, Curse of Mercy`\n"
+        "\n"
+        "`!searchloot cursewith <curse>, <N>` — curse + N+ total curses\n"
+        "  e.g. `!searchloot cursewith Curse of Transfiguration, 3`\n"
+        "\n"
+        "`!searchloot combo <item>, <N>` — item with N+ curses total\n"
+        "  e.g. `!searchloot combo Archangel's, 2`\n"
+        "\n"
+        "`!searchloot combo <item>, <curse>, <N>` — item + curse + N+ curses\n"
+        "  e.g. `!searchloot combo Dunestrider Chestplate, Curse of Mercy, 3`\n"
+        "\n"
+        "`!searchloot all <item>, <c1>, <c2>, ...` — item with ALL listed curses\n"
+        "  e.g. `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`\n"
+        "\n"
+        "`!searchloot 2curses` — any item with 2+ curses\n"
+        "`!searchloot ncurses <N>` — any item with N+ curses"
+    )
+    await ctx.send(
+        "**🔮 Loot Search Bot — Commands (2/3) — Player Search**\n"
+        "\n"
+        "`!player <name>` — all cursed drops for that player\n"
+        "  e.g. `!player apocgaem`\n"
+        "\n"
+        "`!player <name>, item <item>` — player's drops of a specific item\n"
+        "  e.g. `!player apocgaem, item Warhammer`\n"
+        "\n"
+        "`!player <name>, curse <curse>` — player's drops with a specific curse\n"
+        "  e.g. `!player apocgaem, curse Curse of Mercy`\n"
+        "\n"
+        "`!player <name>, 2curses` — player's drops with 2+ curses\n"
+        "\n"
+        "`!player <name>, ncurses <N>` — player's drops with N+ curses\n"
+        "  e.g. `!player apocgaem, ncurses 3`"
+    )
+    await ctx.send(
+        "**🔮 Loot Search Bot — Commands (3/3) — Database & Debug**\n"
+        "\n"
+        "**📦 Database:**\n"
+        "`!backfill [limit]` — scan last N messages and store drops (default 500)\n"
+        "`!backfillfrom <message_id>` — backfill from a message ID onwards\n"
+        "`!dbwipe` — wipe all drops and backfill last 500 messages\n"
+        "`!dbwipe <message_id>` — wipe and backfill from a specific message ID\n"
+        "`!dbstats` — total items logged, oldest and newest entry dates\n"
+        "`!dbitems` — all unique item names with drop counts\n"
+        "`!dboldest [n]` — oldest N logged drops (default 5)\n"
+        "`!dbnewest [n]` — most recent N logged drops (default 5)\n"
+        "\n"
+        "**🛠 Debug:**\n"
+        "`!debug [n]` — inspect last N messages and show what the bot parsed\n"
+        "`!debugitem <name>` — show exactly how an item is stored in the DB"
+    )
 
 
 # ─────────────────────────── RUN ────────────────────────────────────────────
