@@ -169,14 +169,43 @@ async def search_db(guild_id, where_clause, params, limit=50):
         """, (guild_id, *params))
         return await cursor.fetchall()
 
-def format_results(rows, label):
+BATCH_SIZE = 5
+
+def format_results_batched(rows, label):
+    """
+    Returns a list of messages to send, each containing up to BATCH_SIZE items.
+    First message has the header; subsequent messages are continuations.
+    Returns a single-element list with an error string if no results.
+    """
     if not rows:
-        return f"❌ No drops found matching: **{label}**"
-    lines = [f"✅ Found **{len(rows)}** result(s) for **{label}**:"]
+        return [f"❌ No drops found matching: **{label}**"]
+
+    # Build one line per result
+    item_lines = []
     for r in rows:
         curse_info = f"\n    *{r['curses']}*" if r['curses'] else ""
-        lines.append(f"• [{r['item_name']}]({r['jump_url']}) ({r['curse_count']} curse(s)){curse_info}")
-    return "\n".join(lines)[:2000]
+        item_lines.append(f"• [{r['item_name']}]({r['jump_url']}) ({r['curse_count']} curse(s)){curse_info}")
+
+    # Chunk into batches
+    batches = [item_lines[i:i + BATCH_SIZE] for i in range(0, len(item_lines), BATCH_SIZE)]
+    total = len(rows)
+    total_pages = len(batches)
+
+    messages = []
+    for idx, batch in enumerate(batches):
+        page = f"({idx + 1}/{total_pages})" if total_pages > 1 else ""
+        if idx == 0:
+            header = f"✅ Found **{total}** result(s) for **{label}**: {page}"
+        else:
+            header = f"📄 Continued {page}"
+        messages.append(header + "\n" + "\n".join(batch))
+
+    return messages
+
+
+async def send_results(ctx, rows, label):
+    for msg in format_results_batched(rows, label):
+        await ctx.send(msg)
 
 
 # ─────────────────────────── SEARCH COMMANDS ────────────────────────────────
@@ -200,7 +229,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
     # ── 2curses ───────────────────────────────────────────────────────────────
     if search_type == "2curses":
         rows = await search_db(guild_id, "curse_count >= 2", ())
-        await ctx.send(format_results(rows, "2+ curses"))
+        await send_results(ctx, rows, "2+ curses")
 
     # ── ncurses ───────────────────────────────────────────────────────────────
     elif search_type == "ncurses":
@@ -209,21 +238,21 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
         except ValueError:
             await ctx.send("❌ Usage: `!searchloot ncurses <number>`"); return
         rows = await search_db(guild_id, "curse_count >= ?", (n,))
-        await ctx.send(format_results(rows, f"{n}+ curses"))
+        await send_results(ctx, rows, f"{n}+ curses")
 
     # ── item ──────────────────────────────────────────────────────────────────
     elif search_type == "item":
         if not query:
             await ctx.send("❌ Usage: `!searchloot item <name>`"); return
         rows = await search_db(guild_id, "item_name LIKE ?", (f"%{query}%",))
-        await ctx.send(format_results(rows, query))
+        await send_results(ctx, rows, query)
 
     # ── curse ─────────────────────────────────────────────────────────────────
     elif search_type == "curse":
         if not query:
             await ctx.send("❌ Usage: `!searchloot curse <curse name>`"); return
         rows = await search_db(guild_id, "curses LIKE ?", (f"%{query}%",))
-        await ctx.send(format_results(rows, query))
+        await send_results(ctx, rows, query)
 
     # ── has: item + one specific curse ───────────────────────────────────────
     elif search_type in ("has", "specific"):
@@ -236,7 +265,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
             "item_name LIKE ? AND curses LIKE ?",
             (f"%{item_q}%", f"%{curse_q}%")
         )
-        await ctx.send(format_results(rows, f"{item_q} + {curse_q}"))
+        await send_results(ctx, rows, f"{item_q} + {curse_q}")
 
     # ── combo: item + specific curse + minimum curse count ───────────────────
     elif search_type == "combo":
@@ -265,7 +294,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
                 "item_name LIKE ? AND curse_count >= ?",
                 (f"%{item_q}%", min_n)
             )
-            await ctx.send(format_results(rows, f"{item_q} with {min_n}+ curses"))
+            await send_results(ctx, rows, f"{item_q} with {min_n}+ curses")
         else:
             # Form 2: item + curse(s) + N  (everything between item and last part is the curse)
             curse_q = ",".join(parts[1:-1]).strip()
@@ -274,7 +303,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
                 "item_name LIKE ? AND curses LIKE ? AND curse_count >= ?",
                 (f"%{item_q}%", f"%{curse_q}%", min_n)
             )
-            await ctx.send(format_results(rows, f"{item_q} + {curse_q} + {min_n}+ curses"))
+            await send_results(ctx, rows, f"{item_q} + {curse_q} + {min_n}+ curses")
 
     # ── cursewith: any item that has a specific curse + N+ total curses ─────────
     elif search_type == "cursewith":
@@ -294,7 +323,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
             "curses LIKE ? AND curse_count >= ?",
             (f"%{curse_q}%", min_n)
         )
-        await ctx.send(format_results(rows, f"{curse_q} + {min_n}+ curses"))
+        await send_results(ctx, rows, f"{curse_q} + {min_n}+ curses")
 
     # ── all: item that has ALL listed curses ──────────────────────────────────
     elif search_type == "all":
@@ -314,7 +343,7 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
             (f"%{item_q}%", *curse_params)
         )
         label = f"{item_q} with ALL of: {', '.join(curses_q)}"
-        await ctx.send(format_results(rows, label))
+        await send_results(ctx, rows, label)
 
     else:
         await ctx.send(f"❌ Unknown type `{search_type}`. Use `!loothelp` for options.")
