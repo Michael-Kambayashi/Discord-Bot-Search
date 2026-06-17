@@ -401,22 +401,70 @@ async def searchloot(ctx, search_type: str, *, query: str = ""):
             f"{curse_q} + {min_n}+ curses"
         )
 
-    # ── all: item that has ALL listed curses ──────────────────────────────────
-    elif search_type == "all":
+    # ── all: item + ALL listed curses (with or without an item filter, optional N+)
+    #
+    #   WITH item:    !searchloot all <item>, <c1>, <c2>, ...
+    #   WITHOUT item: !searchloot all, <c1>, <c2>, ...
+    #   WITHOUT item + N+: !searchloot all, <c1>, <c2>, <N>
+    # discord.py tokenises "all," as search_type="all," so we strip the trailing comma
+    # to detect the no-item form.
+    elif search_type.rstrip(',') == "all":
+        no_item = search_type.endswith(',')
         parts = [p.strip() for p in query.split(',')]
-        if len(parts) < 2:
-            await ctx.send("❌ Usage: `!searchloot all <item>, <curse1>, <curse2>, ...`\n"
-                           "Example: `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`"); return
-        item_q   = parts[0]
-        curses_q = parts[1:]
-        curse_conditions = " AND ".join(["curses LIKE ?"] * len(curses_q))
-        curse_params = tuple(f"%{c}%" for c in curses_q)
-        await search_or_scan(
-            ctx, guild_id,
-            f"item_name LIKE ? AND {curse_conditions}",
-            (f"%{item_q}%", *curse_params),
-            f"{item_q} with ALL of: {', '.join(curses_q)}"
-        )
+        parts = [p for p in parts if p]  # drop empty segments
+
+        if no_item:
+            # ── curse-only forms ──────────────────────────────────────────────
+            if not parts:
+                await ctx.send(
+                    "❌ Usage:\n"
+                    "`!searchloot all, <c1>, <c2>` — any item with ALL those curses\n"
+                    "`!searchloot all, <c1>, <c2>, <N>` — …and N+ total curses\n"
+                    "Example: `!searchloot all, Curse of Mercy, Curse of Fear`"
+                ); return
+
+            # Detect optional trailing N (min curse count)
+            min_n = None
+            try:
+                min_n = int(parts[-1])
+                curses_q = parts[:-1]
+            except ValueError:
+                curses_q = parts
+
+            if not curses_q:
+                await ctx.send("❌ Please provide at least one curse name."); return
+
+            curse_conditions = " AND ".join(["curses LIKE ?"] * len(curses_q))
+            curse_params = tuple(f"%{c}%" for c in curses_q)
+
+            if min_n is not None:
+                where  = f"{curse_conditions} AND curse_count >= ?"
+                params = (*curse_params, min_n)
+                label  = f"ALL of: {', '.join(curses_q)} + {min_n}+ curses"
+            else:
+                where  = curse_conditions
+                params = curse_params
+                label  = f"ALL of: {', '.join(curses_q)}"
+
+            await search_or_scan(ctx, guild_id, where, params, label)
+
+        else:
+            # ── item + curses form ────────────────────────────────────────────
+            if len(parts) < 2:
+                await ctx.send(
+                    "❌ Usage: `!searchloot all <item>, <curse1>, <curse2>, ...`\n"
+                    "Example: `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`"
+                ); return
+            item_q   = parts[0]
+            curses_q = parts[1:]
+            curse_conditions = " AND ".join(["curses LIKE ?"] * len(curses_q))
+            curse_params = tuple(f"%{c}%" for c in curses_q)
+            await search_or_scan(
+                ctx, guild_id,
+                f"item_name LIKE ? AND {curse_conditions}",
+                (f"%{item_q}%", *curse_params),
+                f"{item_q} with ALL of: {', '.join(curses_q)}"
+            )
 
     else:
         await ctx.send(f"❌ Unknown type `{search_type}`. Use `!loothelp` for options.")
@@ -733,6 +781,12 @@ async def loothelp(ctx):
         "\n"
         "`!searchloot all <item>, <c1>, <c2>, ...` — item with ALL listed curses\n"
         "  e.g. `!searchloot all Dunestrider Chestplate, Curse of Mercy, Curse of Fear`\n"
+        "\n"
+        "`!searchloot all, <c1>, <c2>, ...` — any item with ALL those curses (no item filter)\n"
+        "  e.g. `!searchloot all, Curse of Mercy, Curse of Fear`\n"
+        "\n"
+        "`!searchloot all, <c1>, <c2>, <N>` — any item with ALL those curses AND N+ total\n"
+        "  e.g. `!searchloot all, Curse of Mercy, Curse of Fear, 3`\n"
         "\n"
         "`!searchloot 2curses` — any item with 2+ curses\n"
         "`!searchloot ncurses <N>` — any item with N+ curses"
