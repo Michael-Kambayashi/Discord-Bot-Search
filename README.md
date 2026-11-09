@@ -80,6 +80,10 @@ The following command descriptions come from the bot's help text:
 
 <img width="330" height="87" alt="Untitled" src="https://github.com/user-attachments/assets/c65e86b1-66be-48f9-9a9f-cd5fb63e1d2a" />
 
+<br>
+
+<img width="338" height="97" alt="image (2)" src="https://github.com/user-attachments/assets/06cb03c5-8eb2-4d59-860d-71d9e99d9009" />
+
 ### `!dbstats`
 
 <img width="305" height="96" alt="image" src="https://github.com/user-attachments/assets/4157a25d-0e0f-42ee-83e5-e3593fd04396" />
