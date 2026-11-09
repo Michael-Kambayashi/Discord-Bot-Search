@@ -77,15 +77,21 @@ The following command descriptions come from the bot's help text:
 
 **Example workflow:** Receive webhook reports in a Discord channel → run `!backfill 1000` → review `!dbstats` or `!dbitems` → use the bot's item-search commands to retrieve saved loot information.
 - `!backfill 1000`
+
 <br>
+
 <img width="330" height="87" alt="Untitled" src="https://github.com/user-attachments/assets/c65e86b1-66be-48f9-9a9f-cd5fb63e1d2a" />
 
 - `!dbstats`
+
 <br>
+
 <img width="305" height="96" alt="image" src="https://github.com/user-attachments/assets/4157a25d-0e0f-42ee-83e5-e3593fd04396" />
 
 - `!dbitems`
+
 <br>
+
 <img width="356" height="252" alt="image" src="https://github.com/user-attachments/assets/da5ccfbe-c00d-4c3a-b1e3-28d3a5d1bf1d" />
 
 > This is **not continuous automatic ingestion**: the database import is initiated by a Discord command. The bot performs the parsing and insertion after that command is issued.
