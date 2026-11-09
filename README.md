@@ -76,13 +76,11 @@ The following command descriptions come from the bot's help text:
 | `!debugitem <name>` | Inspect exactly how an item is stored in the database. |
 
 **Example workflow:** Receive webhook reports in a Discord channel → run `!backfill 1000` → review `!dbstats` or `!dbitems` → use the bot's item-search commands to retrieve saved loot information.
-## `!backfill 1000`
+### `!backfill 1000`
 
 <img width="330" height="87" alt="Untitled" src="https://github.com/user-attachments/assets/c65e86b1-66be-48f9-9a9f-cd5fb63e1d2a" />
 
-- `!dbstats`
-
-<br>
+### `!dbstats`
 
 <img width="305" height="96" alt="image" src="https://github.com/user-attachments/assets/4157a25d-0e0f-42ee-83e5-e3593fd04396" />
 
