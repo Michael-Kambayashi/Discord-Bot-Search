@@ -48,7 +48,7 @@ Searchable item database
 - **Automation and recovery:** contains game-specific chest selection, retry, timeout monitoring and server-switching logic.
 
 **Example Webhook Message**
-- <img width="643" height="310" alt="Untitled" src="https://github.com/user-attachments/assets/836d331c-8641-44bf-ae9a-263f50b4ce50" />
+<img width="643" height="310" alt="Untitled" src="https://github.com/user-attachments/assets/836d331c-8641-44bf-ae9a-263f50b4ce50" />
 
 ### Python Discord bot — `discord-bot/bot.py`
 
