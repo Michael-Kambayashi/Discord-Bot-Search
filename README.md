@@ -47,7 +47,7 @@ Searchable item database
 - **JSON and HTTP integration:** creates Discord embed-style payloads using `HttpService:JSONEncode()` and submits them through an HTTP POST request.
 - **Automation and recovery:** contains game-specific chest selection, retry, timeout monitoring and server-switching logic.
 
-**Example Webhook Message**
+### Example Webhook Message
 <br>
 <img width="643" height="310" alt="Untitled" src="https://github.com/user-attachments/assets/836d331c-8641-44bf-ae9a-263f50b4ce50" />
 
@@ -76,12 +76,15 @@ The following command descriptions come from the bot's help text:
 | `!debugitem <name>` | Inspect exactly how an item is stored in the database. |
 
 **Example workflow:** Receive webhook reports in a Discord channel → run `!backfill 1000` → review `!dbstats` or `!dbitems` → use the bot's item-search commands to retrieve saved loot information.
-- `!backfill 1000`
-- <img width="330" height="87" alt="Untitled" src="https://github.com/user-attachments/assets/c65e86b1-66be-48f9-9a9f-cd5fb63e1d2a" />
+`!backfill 1000`
+<br>
+<img width="330" height="87" alt="Untitled" src="https://github.com/user-attachments/assets/c65e86b1-66be-48f9-9a9f-cd5fb63e1d2a" />
 - `!dbstats`
-- <img width="305" height="96" alt="image" src="https://github.com/user-attachments/assets/4157a25d-0e0f-42ee-83e5-e3593fd04396" />
+<br>
+<img width="305" height="96" alt="image" src="https://github.com/user-attachments/assets/4157a25d-0e0f-42ee-83e5-e3593fd04396" />
 - `!dbitems`
-- <img width="356" height="252" alt="image" src="https://github.com/user-attachments/assets/da5ccfbe-c00d-4c3a-b1e3-28d3a5d1bf1d" />
+<br>
+<img width="356" height="252" alt="image" src="https://github.com/user-attachments/assets/da5ccfbe-c00d-4c3a-b1e3-28d3a5d1bf1d" />
 
 > This is **not continuous automatic ingestion**: the database import is initiated by a Discord command. The bot performs the parsing and insertion after that command is issued.
 
